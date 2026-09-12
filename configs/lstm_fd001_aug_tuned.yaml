@@ -1,0 +1,22 @@
+subset: FD001
+model: lstm
+run_tag: aug_tuned
+rul_clip: 125
+window_size: 30
+# Chosen via a validation-fold sweep (scripts/sweep_augmentation.py) over
+# n_engines in {25,...,200} x short_life_quantile in {none, 0.5, 0.3}:
+# unbiased volume beat every life-skewed variant at every n_engines tested,
+# and val RMSE plateaus (then mildly worsens) past ~100 engines.
+augmentation:
+  n_engines: 100
+  short_life_quantile: null
+  rate_boost: 1.0
+  random_state: 0
+lstm:
+  hidden_size: 64
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  batch_size: 256
+  epochs: 30
+  random_state: 0

@@ -37,14 +37,27 @@ project brief for the full five-phase plan; this repo currently covers
   for the design writeup, plausibility-check plots (real vs. synthetic
   trajectories, lifetime distributions), and the full before/after
   evaluation.
-- **Augmentation result is genuinely mixed, not a blanket win**: adding
-  synthetic engines to training cut LSTM test RMSE by 25% (22.3 → 16.9) and
-  improved imminent-failure recall, but slightly *hurt* the GBM baseline,
-  worsening monotonically with more synthetic data. Reported as-is rather
-  than cherry-picked — see the notebook for the full discussion of why.
-- Run it: `python scripts/generate_synthetic_data.py` (plausibility plots)
-  and `python scripts/train.py --config configs/gbm_fd001_aug_moderate.yaml`
-  (or any `*_aug_*.yaml` config) for a training run with augmentation.
+- **Augmentation result is genuinely mixed, not a blanket win**, and a
+  validation-driven sweep (`scripts/sweep_augmentation.py`, grid over
+  `n_engines` × `short_life_quantile`, selecting by validation fold —
+  test set never touched) confirmed it wasn't just bad luck on the first
+  two hand-picked configs:
+  - **GBM: no config in the swept grid beat the no-augmentation baseline.**
+    This simulator's synthetic data doesn't help GBM at any intensity or
+    life-skew tried.
+  - **LSTM: a real, tunable win.** Test RMSE drops 29% (22.3 → 15.8) with
+    the sweep-selected config — enough to beat the GBM baseline outright.
+    Imminent-failure recall is a separate story: it's a high-variance
+    metric on this test set (only 16 positive examples total), and the
+    RMSE-optimal config doesn't also win on recall — see the notebook for
+    the full tradeoff and why recall/precision shouldn't be the primary
+    tuning signal at this sample size.
+  - Full writeup, sweep plots, and the honest discussion of both findings:
+    [`notebooks/02_simulator_and_augmentation.ipynb`](notebooks/02_simulator_and_augmentation.ipynb).
+- Run it: `python scripts/generate_synthetic_data.py` (plausibility plots),
+  `python scripts/sweep_augmentation.py --model gbm|lstm` (the sweep), and
+  `python scripts/train.py --config configs/lstm_fd001_aug_tuned.yaml` (or
+  any `*_aug_*.yaml` config) for a training run with augmentation.
 
 ## Setup
 

@@ -1,0 +1,22 @@
+subset: FD001
+model: lstm
+run_tag: aug_recall_optimized
+rul_clip: 125
+window_size: 30
+# Alternative pick from the same sweep as aug_tuned.yaml, optimizing for
+# validation imminent-failure recall/F1 instead of RMSE: n=100 unbiased won
+# on RMSE but had the worst recall (0.88) among the strong candidates; this
+# config had the best val recall (0.97) and F1 (0.91) of any augmented run.
+augmentation:
+  n_engines: 75
+  short_life_quantile: 0.3
+  rate_boost: 1.0
+  random_state: 0
+lstm:
+  hidden_size: 64
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  batch_size: 256
+  epochs: 30
+  random_state: 0
