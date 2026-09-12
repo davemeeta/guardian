@@ -1,0 +1,12 @@
+subset: FD001
+model: lstm
+rul_clip: 125
+window_size: 30
+lstm:
+  hidden_size: 64
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  batch_size: 256
+  epochs: 30
+  random_state: 0

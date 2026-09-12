@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# raw/processed data — fetched via scripts/download_data.py, not versioned
+data/raw/
+data/processed/
+
+# experiment tracking + model artifacts
+mlruns/
+mlartifacts/
+mlflow.db
+checkpoints/
+outputs/
+
+.DS_Store

@@ -1,0 +1,9 @@
+subset: FD004
+model: gbm
+rul_clip: 125
+gbm:
+  num_leaves: 63
+  learning_rate: 0.05
+  n_estimators: 800
+  min_child_samples: 20
+  random_state: 0
