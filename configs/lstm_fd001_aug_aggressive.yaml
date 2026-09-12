@@ -1,0 +1,18 @@
+subset: FD001
+model: lstm
+run_tag: aug_aggressive
+rul_clip: 125
+window_size: 30
+augmentation:
+  n_engines: 100
+  short_life_quantile: 0.3
+  rate_boost: 1.2
+  random_state: 0
+lstm:
+  hidden_size: 64
+  num_layers: 2
+  dropout: 0.2
+  learning_rate: 0.001
+  batch_size: 256
+  epochs: 30
+  random_state: 0

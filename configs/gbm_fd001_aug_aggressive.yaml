@@ -1,0 +1,15 @@
+subset: FD001
+model: gbm
+run_tag: aug_aggressive
+rul_clip: 125
+augmentation:
+  n_engines: 100
+  short_life_quantile: 0.3
+  rate_boost: 1.2
+  random_state: 0
+gbm:
+  num_leaves: 31
+  learning_rate: 0.05
+  n_estimators: 500
+  min_child_samples: 20
+  random_state: 0

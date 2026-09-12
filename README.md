@@ -7,7 +7,7 @@ phases) to monitor its own model's health, debate internally whether observed
 performance drift is real or noise, and decide whether to retrain, with a
 full audit trail and everything running on local, open-weight LLMs. See the
 project brief for the full five-phase plan; this repo currently covers
-**Phase 1: data & baseline ML**.
+**Phase 1 (data & baseline ML)** and **Phase 2 (digital-twin augmentation)**.
 
 ## Phase 1 status
 
@@ -23,6 +23,28 @@ project brief for the full five-phase plan; this repo currently covers
   failure. That imbalance is the problem Phase 2's digital-twin simulator
   exists to address.
 - Experiment tracking: MLflow, entirely local (SQLite backend, no server).
+
+## Phase 2 status
+
+- **Digital-twin degradation simulator** (`src/guardian/simulator/`): fits
+  a physics-informed model from real FD001 data — a shared exponential
+  degradation curve per sensor, a per-engine latent "decline rate" driving
+  all sensors together, per-sensor manufacturing offsets, and calibrated
+  noise — then samples entirely new synthetic run-to-failure engine
+  trajectories from it, optionally biased toward fast-failing engines to
+  directly target the rare imminent-failure class. See
+  [`notebooks/02_simulator_and_augmentation.ipynb`](notebooks/02_simulator_and_augmentation.ipynb)
+  for the design writeup, plausibility-check plots (real vs. synthetic
+  trajectories, lifetime distributions), and the full before/after
+  evaluation.
+- **Augmentation result is genuinely mixed, not a blanket win**: adding
+  synthetic engines to training cut LSTM test RMSE by 25% (22.3 → 16.9) and
+  improved imminent-failure recall, but slightly *hurt* the GBM baseline,
+  worsening monotonically with more synthetic data. Reported as-is rather
+  than cherry-picked — see the notebook for the full discussion of why.
+- Run it: `python scripts/generate_synthetic_data.py` (plausibility plots)
+  and `python scripts/train.py --config configs/gbm_fd001_aug_moderate.yaml`
+  (or any `*_aug_*.yaml` config) for a training run with augmentation.
 
 ## Setup
 
@@ -87,15 +109,29 @@ error. See [`src/guardian/eval/metrics.py`](src/guardian/eval/metrics.py).
   `MLFLOW_DISABLE_TELEMETRY=true`, set before MLflow is imported. Consistent
   with this project's no-data-leaves-the-machine principle, and it also
   happened to race with the MPS backend and crash training.
+- **The simulator's per-cycle noise is estimated from consecutive-cycle
+  differences of the curve-fit residual, not the raw residual.** The raw
+  residual also carries low-frequency curve-misfit (one shared decline-rate
+  can't perfectly track every sensor), which overstated noise and made
+  early synthetic trajectories visibly fuzzier than real ones on inspection.
+  First-differencing cancels the slow-varying part and isolates the true
+  high-frequency noise. See
+  [`src/guardian/simulator/engine_simulator.py`](src/guardian/simulator/engine_simulator.py).
+- **Synthetic engines are added only to the training fold, never
+  validation.** Fitting the simulator on validation-fold engines would leak
+  their characteristics into the sampled population, and keeping val purely
+  real keeps augmented-run metrics directly comparable to the baseline run.
+  See `augment_fit_split()` in
+  [`scripts/train.py`](scripts/train.py).
 
 ## Repo layout
 
 ```
-data/            raw (gitignored) + provenance docs
-src/guardian/    data loading/labeling/features, models, eval metrics
-scripts/         download_data.py, train.py
-configs/         one YAML per (model, subset) experiment
-notebooks/       EDA
-tests/           unit tests for labeling, regime normalization, sequence
-                 windowing, and metrics
+data/                raw (gitignored) + provenance docs
+src/guardian/        data loading/labeling/features, models, simulator, eval metrics
+scripts/             download_data.py, train.py, generate_synthetic_data.py
+configs/             one YAML per (model, subset[, augmentation]) experiment
+notebooks/           EDA; simulator design + augmentation results
+tests/               unit tests for labeling, regime normalization, sequence
+                     windowing, the simulator, and metrics
 ```

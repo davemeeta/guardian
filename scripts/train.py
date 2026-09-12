@@ -16,6 +16,7 @@ os.environ.setdefault("MLFLOW_DISABLE_TELEMETRY", "true")
 import joblib
 import mlflow
 import numpy as np
+import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,7 @@ from guardian.data.sequences import make_test_windows, make_train_windows  # noq
 from guardian.data.split import train_val_unit_split  # noqa: E402
 from guardian.eval.metrics import imminent_failure_prf, mae, phm08_score, rmse  # noqa: E402
 from guardian.eval.plots import plot_error_hist, plot_pred_vs_actual  # noqa: E402
+from guardian.simulator.engine_simulator import EngineSimulator  # noqa: E402
 
 # NOTE: lightgbm and torch (MPS backend) are only ever imported inside
 # run_gbm()/run_lstm() respectively, never both in the same process — on
@@ -38,6 +40,36 @@ from guardian.eval.plots import plot_error_hist, plot_pred_vs_actual  # noqa: E4
 
 CHECKPOINT_DIR = ROOT / "checkpoints"
 PLOTS_DIR = ROOT / "outputs" / "plots"
+
+
+def augment_fit_split(fit_raw: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Extend the *training* fold with synthetic engines (never the val fold).
+
+    Fitting the simulator on the val split too would leak those engines'
+    characteristics into the sampled synthetic population; keeping
+    augmentation strictly inside the fit split also means val metrics stay
+    directly comparable to a non-augmented run using the same random split.
+    The simulator uses unclipped RUL (true degradation progress) regardless
+    of whatever rul_clip this run's model config uses for its own labels.
+    """
+    aug_cfg = config.get("augmentation")
+    if not aug_cfg:
+        return fit_raw
+
+    subset = config["subset"]
+    fit_labeled = add_train_rul(fit_raw, clip=None)
+    sim = EngineSimulator().fit(fit_labeled)
+    start_id = int(fit_raw["unit_number"].max()) + 1
+    synthetic = sim.sample(
+        n_engines=aug_cfg["n_engines"],
+        start_unit_id=start_id,
+        short_life_quantile=aug_cfg.get("short_life_quantile"),
+        rate_boost=aug_cfg.get("rate_boost", 1.0),
+        random_state=aug_cfg.get("random_state", 0),
+    )
+    print(f"[{subset}] augmented training fold with {aug_cfg['n_engines']} synthetic engines "
+          f"({len(synthetic)} cycles, {len(fit_raw)} real training cycles)")
+    return pd.concat([fit_raw, synthetic], ignore_index=True)
 
 
 def evaluate_and_log(y_true: np.ndarray, y_pred: np.ndarray, tag: str) -> dict:
@@ -56,11 +88,14 @@ def run_gbm(config: dict) -> None:
     from guardian.models.gbm import GBMBaseline, GBMConfig
 
     subset = config["subset"]
-    train_df = add_train_rul(load_train(subset), clip=config.get("rul_clip"))
-    fb = FeatureBuilder(subset)
-    train_df = fb.fit_transform(train_df)
+    rul_clip = config.get("rul_clip")
+    fit_raw, val_raw = train_val_unit_split(load_train(subset))
+    fit_raw = augment_fit_split(fit_raw, config)
 
-    fit_df, val_df = train_val_unit_split(train_df)
+    fb = FeatureBuilder(subset)
+    fit_df = fb.fit_transform(add_train_rul(fit_raw, clip=rul_clip))
+    val_df = fb.transform(add_train_rul(val_raw, clip=rul_clip))
+
     model = GBMBaseline(GBMConfig(**config["gbm"]))
     model.fit(
         fit_df[fb.feature_cols], fit_df["RUL"],
@@ -100,11 +135,13 @@ def run_lstm(config: dict) -> None:
 
     subset = config["subset"]
     window_size = config["window_size"]
-    train_df = add_train_rul(load_train(subset), clip=config.get("rul_clip"))
-    fb = FeatureBuilder(subset)
-    train_df = fb.fit_transform(train_df)
+    rul_clip = config.get("rul_clip")
+    fit_raw, val_raw = train_val_unit_split(load_train(subset))
+    fit_raw = augment_fit_split(fit_raw, config)
 
-    fit_df, val_df = train_val_unit_split(train_df)
+    fb = FeatureBuilder(subset)
+    fit_df = fb.fit_transform(add_train_rul(fit_raw, clip=rul_clip))
+    val_df = fb.transform(add_train_rul(val_raw, clip=rul_clip))
     X_fit, y_fit = make_train_windows(fit_df, fb.feature_cols, window_size)
     X_val, y_val = make_train_windows(val_df, fb.feature_cols, window_size)
 
@@ -146,7 +183,9 @@ def main() -> None:
     mlflow.set_tracking_uri(f"sqlite:///{ROOT / 'mlflow.db'}")
     mlflow.set_experiment("guardian-baseline-rul")
 
-    with mlflow.start_run(run_name=f"{config['model']}_{config['subset']}"):
+    suffix = f"_{config['run_tag']}" if config.get("run_tag") else ""
+    run_name = f"{config['model']}_{config['subset']}{suffix}"
+    with mlflow.start_run(run_name=run_name):
         mlflow.log_params(_flatten(config))
         if config["model"] == "gbm":
             run_gbm(config)
