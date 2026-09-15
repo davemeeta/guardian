@@ -56,7 +56,7 @@ class EngineSimulator:
             d_unit = degradation_progress(unit_df["RUL"].to_numpy(), self.rul_clip)
             lifetimes.append(len(unit_df))
 
-            rate = self._fit_unit_rate(d_unit, unit_df)
+            rate = self.fit_unit_rate(d_unit, unit_df)
             rates.append(rate)
 
             healthy = d_unit < 0.05
@@ -91,7 +91,7 @@ class EngineSimulator:
             self.op_setting_stats[col] = (df[col].mean(), df[col].std())
         return self
 
-    def _fit_unit_rate(self, d_unit: np.ndarray, unit_df: pd.DataFrame) -> float:
+    def fit_unit_rate(self, d_unit: np.ndarray, unit_df: pd.DataFrame) -> float:
         """Single latent decline-rate for this unit, fit jointly across all
         trending sensors (one physical fault, many correlated symptoms)."""
 

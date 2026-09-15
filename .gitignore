@@ -15,5 +15,6 @@ mlartifacts/
 mlflow.db
 checkpoints/
 outputs/
+logs/
 
 .DS_Store
