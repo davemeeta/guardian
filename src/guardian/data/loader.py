@@ -8,8 +8,7 @@ DEFAULT_RAW_DIR = Path(__file__).resolve().parents[3] / "data" / "raw" / "cmapss
 
 
 def _read_space_delimited(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path, sep=r"\s+", header=None, names=ALL_COLS)
-    return df
+    return pd.read_csv(path, sep=r"\s+", header=None, names=ALL_COLS)
 
 
 def load_train(subset: str, raw_dir: Path = DEFAULT_RAW_DIR) -> pd.DataFrame:

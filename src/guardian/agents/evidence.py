@@ -1,16 +1,8 @@
 """Builds the structured evidence packet the agents reason over.
 
-Two complementary signals, both computable without needing to know a
-currently-running engine's future:
-  - Retrospective performance: for a batch of engines that have SINCE
-    reached failure, how did the model's RUL predictions compare to what
-    actually happened? (You can't know this in real time for a running
-    engine, but you can for ones that have completed their life — which is
-    a realistic monitoring signal, not a simplification.)
-  - Live data drift: does this batch's early-life ("healthy") sensor
-    readings look like what the simulator calibrated from training data,
-    or does it look like a new regime? This doesn't need any engine to
-    have failed yet.
+Two complementary, model-independent signals: retrospective performance
+(RMSE/imminent-rate on engines that have since reached failure) and live
+sensor drift (early-life readings vs. the simulator's calibrated curves).
 """
 from dataclasses import dataclass, field
 
@@ -55,18 +47,11 @@ class Evidence:
 
     @property
     def rmse_may_be_misleading(self) -> bool:
-        """True when sensor drift is large but RMSE looks fine or even
-        improved. Tree models can't extrapolate past their training range —
-        an input far outside anything seen in training collapses into
-        whatever leaf is at the edge of the tree, which can look stable or
-        even accidentally accurate even though the model has no real
-        understanding of what it's looking at. Observed directly while
-        building this evidence pipeline: a batch with a sensor shifted ~4 SD
-        outside the calibrated range showed RMSE *improving* by 20%+ versus
-        baseline. RMSE alone would have completely missed that batch; the
-        sensor-drift and decline-rate checks (which don't depend on the
-        model's own predictions) are what catch it.
-        """
+        """True when sensor drift is large but RMSE looks fine or improved.
+        Tree models can't extrapolate past their training range, so a
+        far-out-of-range input can collapse into a stable-looking
+        prediction rather than an obviously bad one — observed directly
+        here (a ~4 SD sensor shift *improved* RMSE by 20%+)."""
         max_drift = max((abs(z) for z in self.sensor_drift.values()), default=0.0)
         return max_drift >= 3.0 and self.rmse_delta_pct < 10.0
 
@@ -119,14 +104,10 @@ class Evidence:
 
 
 def evaluate_batch(window_df: pd.DataFrame, model, fb, rul_clip: int = 125) -> tuple[float, float, pd.DataFrame]:
-    """RMSE and imminent-failure rate over every cycle of every engine in
-    window_df, evaluated against RUL clipped the same way the model's own
-    training/validation labels were. Also used to compute the "baseline"
-    figures themselves (see scenarios.build_context), so that a batch's
-    current_rmse and the baseline_rmse it's compared against are always
-    produced by the exact same procedure — the only thing that should
-    differ between them is whatever's actually different about the batch.
-    """
+    """RMSE and imminent-failure rate over every cycle in window_df, RUL
+    clipped the same way training labels were. Also used to compute the
+    "baseline" itself (see scenarios.build_context) so a batch and its
+    baseline are always produced by the exact same procedure."""
     labeled = add_train_rul(window_df, clip=None)
     labeled["RUL"] = labeled["RUL"].clip(upper=rul_clip)
     transformed = fb.transform(labeled)
@@ -145,14 +126,11 @@ def build_evidence(
     sim: EngineSimulator,
     rul_clip: int = 125,
 ) -> Evidence:
-    """window_df: RAW (untransformed) sensor columns for a batch of COMPLETED
-    engines (full run-to-failure trajectories), as from the data loader.
-
-    `baseline_rmse`/`baseline_imminent_rate` must come from `evaluate_batch`
-    too (see scenarios.build_context) — comparing a batch evaluated this way
-    against a baseline computed some other way (e.g. on real data instead of
-    simulator draws) bakes in whatever gap exists between those two data
-    sources, which looks exactly like drift even when there isn't any.
+    """window_df: RAW sensor columns for a batch of COMPLETED engines
+    (full run-to-failure trajectories). `baseline_rmse`/`baseline_imminent_rate`
+    must come from `evaluate_batch` too (see scenarios.build_context) — a
+    baseline computed some other way bakes in whatever gap exists between
+    the two data sources, which looks like drift even when there isn't any.
     """
     current_rmse, current_imminent_rate, labeled = evaluate_batch(window_df, model, fb, rul_clip)
     labeled_unclipped = add_train_rul(window_df, clip=None)

@@ -84,6 +84,19 @@ def evaluate_and_log(y_true: np.ndarray, y_pred: np.ndarray, tag: str) -> dict:
     return metrics
 
 
+def save_and_log_artifacts(
+    model_type: str, subset: str, ckpt_path: Path, test_true: np.ndarray, test_pred: np.ndarray
+) -> None:
+    mlflow.log_artifact(str(ckpt_path))
+    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+    pred_plot = PLOTS_DIR / f"{model_type}_{subset}_pred_vs_actual.png"
+    err_plot = PLOTS_DIR / f"{model_type}_{subset}_error_hist.png"
+    plot_pred_vs_actual(test_true, test_pred, f"{model_type.upper()} {subset} — test", str(pred_plot))
+    plot_error_hist(test_true, test_pred, f"{model_type.upper()} {subset} — test error", str(err_plot))
+    mlflow.log_artifact(str(pred_plot))
+    mlflow.log_artifact(str(err_plot))
+
+
 def run_gbm(config: dict) -> None:
     from guardian.models.gbm import GBMBaseline, GBMConfig
 
@@ -115,15 +128,7 @@ def run_gbm(config: dict) -> None:
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     ckpt_path = CHECKPOINT_DIR / f"gbm_{subset}.joblib"
     joblib.dump(model, ckpt_path)
-    mlflow.log_artifact(str(ckpt_path))
-
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-    pred_plot = PLOTS_DIR / f"gbm_{subset}_pred_vs_actual.png"
-    err_plot = PLOTS_DIR / f"gbm_{subset}_error_hist.png"
-    plot_pred_vs_actual(test_true, test_pred, f"GBM {subset} — test", str(pred_plot))
-    plot_error_hist(test_true, test_pred, f"GBM {subset} — test error", str(err_plot))
-    mlflow.log_artifact(str(pred_plot))
-    mlflow.log_artifact(str(err_plot))
+    save_and_log_artifacts("gbm", subset, ckpt_path, test_true, test_pred)
 
     print(f"[{subset} / gbm] test metrics: {test_metrics}")
 
@@ -160,15 +165,7 @@ def run_lstm(config: dict) -> None:
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     ckpt_path = CHECKPOINT_DIR / f"lstm_{subset}.pt"
     torch.save(model.model.state_dict(), ckpt_path)
-    mlflow.log_artifact(str(ckpt_path))
-
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-    pred_plot = PLOTS_DIR / f"lstm_{subset}_pred_vs_actual.png"
-    err_plot = PLOTS_DIR / f"lstm_{subset}_error_hist.png"
-    plot_pred_vs_actual(test_true, test_pred, f"LSTM {subset} — test", str(pred_plot))
-    plot_error_hist(test_true, test_pred, f"LSTM {subset} — test error", str(err_plot))
-    mlflow.log_artifact(str(pred_plot))
-    mlflow.log_artifact(str(err_plot))
+    save_and_log_artifacts("lstm", subset, ckpt_path, test_true, test_pred)
 
     print(f"[{subset} / lstm] test metrics: {test_metrics}")
 

@@ -1,18 +1,15 @@
 """Physics-informed digital-twin degradation simulator (single-regime subsets).
 
-Design: a real fault (e.g. HPC wear) propagates through several correlated
-sensor readings at once, not independently per sensor. So each synthetic
-engine gets ONE latent "decline rate" driving every sensor's curve together,
-plus a per-sensor manufacturing offset (the calibration variation already
-visible at the start of life, before degradation begins), plus i.i.d.
-per-cycle sensor noise. All four ingredients — curve shape, decline-rate
-distribution, offset distribution, noise level — are estimated from real
-training data in `fit`, then resampled in `sample` to synthesize complete
-run-to-failure trajectories for engines that never existed.
+A real fault (e.g. HPC wear) propagates through several correlated sensor
+readings at once, so each synthetic engine gets ONE latent "decline rate"
+driving every sensor's curve together, plus a per-sensor manufacturing
+offset and i.i.d. per-cycle noise. All four (curve shape, decline-rate
+distribution, offset distribution, noise level) are estimated from real
+data in `fit`, then resampled in `sample`.
 
-Scoped to single-regime subsets (FD001/FD003): op settings are sampled as
-i.i.d. noise around their real mean, which assumes there's only one regime
-to be near. FD002/FD004 would additionally need a sampled regime sequence.
+Scoped to single-regime subsets (FD001/FD003) — op settings are sampled as
+noise around their real mean, which assumes one regime. FD002/FD004 would
+additionally need a sampled regime sequence.
 """
 from dataclasses import dataclass, field
 
@@ -67,15 +64,12 @@ class EngineSimulator:
                 offsets[sensor].append(offset)
                 pred = self.curves[sensor](np.clip(d_unit * rate, 0, 1)) + offset
                 residual = y - pred
-                # First-differencing before estimating noise: the curve fit
-                # is a coarse fit (one shared rate for all sensors, one
-                # offset per sensor), so the raw residual still carries some
-                # low-frequency curve-misfit alongside the true high-
-                # frequency sensor noise. Consecutive-cycle differences
-                # cancel that slow-varying part and isolate the i.i.d. noise
-                # — using the raw residual std here measurably overstated
+                # First-difference before estimating noise: the raw residual
+                # still carries low-frequency curve-misfit (one shared rate
+                # can't perfectly track every sensor), which overstated
                 # noise and made synthetic trajectories visibly fuzzier than
-                # real ones.
+                # real ones. Consecutive-cycle diffs cancel that and isolate
+                # the true i.i.d. noise.
                 resid_diffs[sensor].extend(np.diff(residual).tolist())
 
         self.rate_multipliers = np.array(rates)

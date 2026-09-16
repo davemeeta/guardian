@@ -7,6 +7,7 @@ cleverness, inspectable reasoning" principle. See prompts.py for what each
 role is actually asked to do.
 """
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from guardian.agents.evidence import Evidence
@@ -21,6 +22,13 @@ from guardian.agents.prompts import (
 )
 
 VALID_DECISIONS = {"auto_approve_retrain", "auto_reject", "escalate_to_human"}
+
+
+@contextmanager
+def _timed(timings: dict[str, float], key: str):
+    t0 = time.monotonic()
+    yield
+    timings[key] = time.monotonic() - t0
 
 
 @dataclass
@@ -43,11 +51,10 @@ def run_debate(evidence: Evidence, model: str = DEFAULT_MODEL) -> DebateResult:
     timings: dict[str, float] = {}
     ev_text = evidence.to_prompt_text()
 
-    t0 = time.monotonic()
-    monitor_json, monitor_resp = generate_json(
-        evidence_prompt(ev_text), system=MONITOR_SYSTEM, model=model
-    )
-    timings["monitor_s"] = time.monotonic() - t0
+    with _timed(timings, "monitor_s"):
+        monitor_json, monitor_resp = generate_json(
+            evidence_prompt(ev_text), system=MONITOR_SYSTEM, model=model
+        )
 
     if monitor_json is None:
         parse_errors.append(f"monitor: could not parse JSON from: {monitor_resp.text!r}")
@@ -70,23 +77,20 @@ def run_debate(evidence: Evidence, model: str = DEFAULT_MODEL) -> DebateResult:
 
     result.debated = True
 
-    t0 = time.monotonic()
-    for_resp = generate(evidence_prompt(ev_text), system=ADVOCATE_FOR_SYSTEM, model=model)
-    result.timings_s["advocate_for_s"] = time.monotonic() - t0
+    with _timed(result.timings_s, "advocate_for_s"):
+        for_resp = generate(evidence_prompt(ev_text), system=ADVOCATE_FOR_SYSTEM, model=model)
     result.advocate_for_text = for_resp.text.strip()
 
-    t0 = time.monotonic()
-    against_resp = generate(evidence_prompt(ev_text), system=ADVOCATE_AGAINST_SYSTEM, model=model)
-    result.timings_s["advocate_against_s"] = time.monotonic() - t0
+    with _timed(result.timings_s, "advocate_against_s"):
+        against_resp = generate(evidence_prompt(ev_text), system=ADVOCATE_AGAINST_SYSTEM, model=model)
     result.advocate_against_text = against_resp.text.strip()
 
-    t0 = time.monotonic()
-    judge_json, judge_resp = generate_json(
-        debate_prompt(ev_text, result.advocate_for_text, result.advocate_against_text),
-        system=JUDGE_SYSTEM,
-        model=model,
-    )
-    result.timings_s["judge_s"] = time.monotonic() - t0
+    with _timed(result.timings_s, "judge_s"):
+        judge_json, judge_resp = generate_json(
+            debate_prompt(ev_text, result.advocate_for_text, result.advocate_against_text),
+            system=JUDGE_SYSTEM,
+            model=model,
+        )
 
     if judge_json is None or judge_json.get("decision") not in VALID_DECISIONS:
         result.parse_errors.append(f"judge: could not parse a valid decision from: {judge_resp.text!r}")

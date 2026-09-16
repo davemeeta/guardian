@@ -44,7 +44,7 @@ def main() -> None:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args()
 
-    print(f"Building context (real data + simulator + GBM baseline)...")
+    print("Building context (real data + simulator + GBM baseline)...")
     ctx = build_context()
 
     scenarios = SCENARIOS if args.scenario == "all" else [args.scenario]

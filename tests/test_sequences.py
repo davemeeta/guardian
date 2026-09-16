@@ -1,4 +1,3 @@
-import numpy as np
 import pandas as pd
 
 from guardian.data.sequences import make_test_windows, make_train_windows

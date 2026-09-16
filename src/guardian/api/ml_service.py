@@ -28,10 +28,6 @@ EXPERIMENT_NAME = "guardian-baseline-rul"
 app = FastAPI(title="Guardian ML Service")
 
 
-def _tracking_uri() -> str:
-    return f"sqlite:///{ROOT / 'mlflow.db'}"
-
-
 class RetrainRequest(BaseModel):
     config: str = "gbm_fd001"  # matches a file in configs/<config>.yaml
 
@@ -40,7 +36,7 @@ class RetrainRequest(BaseModel):
 def health() -> dict:
     """Latest known metrics per run name, straight from MLflow — this is
     the "model health over time" data source the dashboard also reads."""
-    mlflow.set_tracking_uri(_tracking_uri())
+    mlflow.set_tracking_uri(f"sqlite:///{ROOT / 'mlflow.db'}")
     try:
         runs = mlflow.search_runs(experiment_names=[EXPERIMENT_NAME])
     except Exception:

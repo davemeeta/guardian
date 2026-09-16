@@ -1,17 +1,13 @@
-"""Builds the shared model+simulator context once, and generates controlled
-test scenarios for exercising the debate pipeline end to end.
-
-Three scenarios, deliberately designed with known ground truth so we can
-sanity-check the debate mechanism makes the right call:
-  - "noise": sampled from the simulator's own calibrated distribution —
-    should look like ordinary sampling variation. Expected: auto_reject.
-  - "genuine_drift": a much faster decline rate PLUS a sensor shift outside
-    the simulator's own fitted family (simulating e.g. a sensor
-    recalibration or new fault mode) — a real regime change, not just "more
-    of the same." Expected: auto_approve_retrain.
-  - "ambiguous": a small batch with a modest rate increase — enough signal
-    to be suspicious, not enough (and too few samples) to be conclusive.
-    Expected: escalate_to_human.
+"""Builds the shared model+simulator context once, and generates three
+controlled test scenarios (with known ground truth) for exercising the
+debate pipeline end to end:
+  - "noise": the simulator's own calibrated distribution, unperturbed.
+    Expected: auto_reject.
+  - "genuine_drift": a faster decline rate plus a sensor shift outside the
+    simulator's fitted family (e.g. a recalibration or new fault mode).
+    Expected: auto_approve_retrain.
+  - "ambiguous": a small batch with a modest rate increase — real signal,
+    too few samples to be conclusive. Expected: escalate_to_human.
 """
 import yaml
 from dataclasses import dataclass
@@ -29,11 +25,10 @@ SUBSET = "FD001"
 RUL_CLIP = 125
 ROOT = Path(__file__).resolve().parents[3]
 SCENARIOS = ["noise", "genuine_drift", "ambiguous"]
-BASELINE_ENGINES = 60  # one large pooled draw, not several small ones averaged —
-# pooling all cycles into a single RMSE computation gives a tighter estimate
-# than averaging several noisier small-sample estimates (batch-to-batch RMSE
-# on 15-engine draws was observed to swing +-4-5 cycles from noise alone,
-# comparable in size to some of the effects we're trying to detect).
+# One large pooled draw, not several small ones averaged — batch-to-batch
+# RMSE on small draws swings +-4-5 cycles from noise alone, comparable to
+# the effects we're trying to detect, so a bigger pool is needed to be stable.
+BASELINE_ENGINES = 60
 
 
 @dataclass
@@ -50,17 +45,13 @@ def build_context() -> GuardianContext:
     """Refits the Phase 1 GBM baseline and Phase 2 simulator on the same
     train/val split used throughout the project.
 
-    The "historical baseline" RMSE/imminent-rate agents compare each batch
-    against is deliberately computed from several FRESH, unperturbed
-    simulator draws rather than from real validation data. GBM has a known
-    real-vs-synthetic performance gap (see Phase 2's augmentation sweep —
-    it's genuinely worse on any simulator-generated batch, even an
-    unperturbed one, than on real data). If the baseline came from real
-    data, every simulator-drawn scenario — including "noise" — would look
-    like drift just from that gap, which isn't the thing we're trying to
-    detect. Comparing simulator-drawn batches against a simulator-drawn
-    baseline isolates the one thing we actually inject differently: whether
-    a scenario is perturbed or not.
+    The "historical baseline" agents compare each batch against comes from
+    a fresh, unperturbed simulator draw, not real validation data — GBM has
+    a known real-vs-synthetic gap (see Phase 2's augmentation sweep), so a
+    real-data baseline would make every simulator-drawn scenario (including
+    "noise") look like drift just from that gap. Comparing simulator draws
+    against a simulator baseline isolates the one thing actually injected:
+    whether a scenario is perturbed.
     """
     real_raw = load_train(SUBSET)
     fit_raw, val_raw = train_val_unit_split(real_raw)

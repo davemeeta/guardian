@@ -96,6 +96,7 @@ with tab_decisions:
     if not decisions:
         st.info("No agent decisions logged yet. Run `python scripts/run_agent_pipeline.py --scenario all` first.")
     else:
+        decisions = list(reversed(decisions))  # most recent first
         summary_rows = [
             {
                 "timestamp": d["timestamp"],
@@ -106,7 +107,7 @@ with tab_decisions:
                 "judge_decision": d.get("judge_decision") or "—",
                 "confidence": d.get("judge_confidence") or "—",
             }
-            for d in reversed(decisions)
+            for d in decisions
         ]
         summary = pd.DataFrame(summary_rows)
         st.subheader(f"Decision log ({len(summary)} total)")
@@ -115,7 +116,7 @@ with tab_decisions:
         st.subheader("Full transcript")
         labels = [f"{r['timestamp']} — {r['scenario']} — {r['judge_decision']}" for r in summary_rows]
         idx = st.selectbox("Select a decision", range(len(labels)), format_func=lambda i: labels[i])
-        record = list(reversed(decisions))[idx]
+        record = decisions[idx]
 
         evidence_dict = {k: v for k, v in record["evidence"].items() if k != "top_drifted_sensors"}
         evidence = Evidence(**evidence_dict)
