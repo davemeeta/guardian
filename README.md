@@ -8,7 +8,8 @@ performance drift is real or noise, and decide whether to retrain, with a
 full audit trail and everything running on local, open-weight LLMs. See the
 project brief for the full five-phase plan; this repo currently covers
 **Phase 1 (data & baseline ML)**, **Phase 2 (digital-twin augmentation)**,
-and **Phase 3 (the debate/judge agent layer)**.
+**Phase 3 (the debate/judge agent layer)**, and **Phase 4 (containerized
+services, CI/CD, dashboard)**.
 
 ## Phase 1 status
 
@@ -113,6 +114,52 @@ and **Phase 3 (the debate/judge agent layer)**.
   python scripts/run_agent_pipeline.py --scenario all
   ```
 
+## Phase 4 status
+
+- **Three containerized services** (`docker-compose.yml`), one shared
+  `Dockerfile` (they all need the same heavy scientific-Python base anyway,
+  since the agent service retrains a GBM baseline in-process to build
+  evidence — splitting into separate images would just duplicate that
+  weight):
+  - `ml` — FastAPI wrapper around the training pipeline: `GET /health`
+    (latest metrics per run, straight from MLflow — the dashboard's data
+    source too) and `POST /retrain` (shells out to `scripts/train.py`,
+    the same path a human would run from the CLI).
+  - `agent` — FastAPI wrapper around the debate pipeline: `POST /run`
+    (runs monitor → maybe debate → judge on a named scenario, logs it, and
+    — only if `auto_execute: true` **and** the Judge actually approved —
+    calls the `ml` service's `/retrain` over plain HTTP) and
+    `GET /decisions` (the audit trail, most recent first).
+  - `dashboard` — the Streamlit app described below.
+  - **Ollama itself is deliberately not containerized.** Its model weights
+    are large and Docker on macOS can't pass through Metal GPU
+    acceleration, so it runs as a normal host process; the `agent`
+    container reaches it via `OLLAMA_HOST=http://host.docker.internal:11434`
+    (works on Docker Desktop out of the box; `extra_hosts` in the compose
+    file adds the same alias on Linux).
+  - Run it: `touch mlflow.db && mkdir -p logs checkpoints outputs && docker compose up --build`,
+    then `ml` on :8001, `agent` on :8002, dashboard on :8501.
+- **Streamlit dashboard** (`src/guardian/dashboard/app.py`) — two tabs:
+  "Model health" (a chart + table of MLflow metrics across every logged
+  training run, filterable by run and metric) and "Agent decisions & audit
+  trail" (every logged decision as a sortable table, plus a full-transcript
+  view — the evidence text, both advocate arguments, and the Judge's
+  verdict + rationale, reconstructed straight from the JSONL audit log —
+  for any decision you select). Run standalone:
+  `streamlit run src/guardian/dashboard/app.py`.
+- **CI/CD runs the real agent pipeline, not a mock**
+  (`.github/workflows/guardian-pipeline.yml`): on a weekly schedule or a
+  manual trigger (with a `scenario` input — pick `noise`, `genuine_drift`,
+  or `ambiguous` to simulate different "new data" batches), the workflow
+  installs Ollama fresh on the GitHub-hosted runner, pulls `llama3.2:3b`,
+  and runs the actual monitor → debate → judge pipeline there — still zero
+  cloud LLM API calls, just a different (ephemeral) machine than a laptop.
+  Retraining (`scripts/train.py`) only runs if the Judge's decision was
+  `auto_approve_retrain`; an `escalate_to_human` decision surfaces as a
+  workflow warning rather than silently doing nothing. The full decision
+  (evidence + transcript) is written to the Job Summary and uploaded as a
+  build artifact either way.
+
 ## Setup
 
 ```bash
@@ -199,18 +246,40 @@ error. See [`src/guardian/eval/metrics.py`](src/guardian/eval/metrics.py).
   against a simulator-drawn baseline isolates the one thing actually being
   tested: whether a given batch was perturbed. See `build_context()` in
   [`src/guardian/agents/scenarios.py`](src/guardian/agents/scenarios.py).
+- **Tests and services rely on `PYTHONPATH`/`sys.path`, not the editable
+  install alone.** `pip install -e .` succeeds and works within the same
+  shell it was run in, but its `.pth`-based path injection was observed to
+  not reliably survive into a fresh shell/process on this machine — a
+  real, reproducible quirk of this environment, not a one-off fluke.
+  Rather than debug pip/setuptools internals further, `tests/conftest.py`
+  and every service/script that needs `guardian` importable add `src/` to
+  the path explicitly (and the Dockerfile sets `PYTHONPATH=/app/src`),
+  which works regardless of whether the editable install's own mechanism
+  does.
+- **The Docker image installs PyTorch from its CPU-only index
+  (`download.pytorch.org/whl/cpu`) before the rest of the package.** None
+  of the three services use a GPU — containers can't reach macOS's Metal
+  backend, and there's no CUDA on the host either — but the default PyPI
+  `torch` wheel pulls several GB of unused NVIDIA CUDA libraries as
+  dependencies regardless. Installing the CPU build first satisfies torch
+  before `pip install -e .` gets a chance to re-resolve it against the
+  CUDA-enabled default.
 
 ## Repo layout
 
 ```
 data/                raw (gitignored) + provenance docs
-src/guardian/        data loading/labeling/features, models, simulator, agents, eval metrics
+src/guardian/        data loading/labeling/features, models, simulator, agents,
+                     api (ml/agent FastAPI services), dashboard (Streamlit), eval metrics
 scripts/             download_data.py, train.py, generate_synthetic_data.py,
-                     sweep_augmentation.py, run_agent_pipeline.py
+                     sweep_augmentation.py, run_agent_pipeline.py, ci_report_decision.py
 configs/             one YAML per (model, subset[, augmentation]) experiment
 notebooks/           EDA; simulator design + augmentation results; agent debate
 logs/                agent_decisions.jsonl audit trail (gitignored, regenerable)
+.github/workflows/   CI/CD: monitor -> debate -> judge -> (conditional) retrain
+Dockerfile,          containerization for the ml/agent/dashboard services
+docker-compose.yml
 tests/               unit tests for labeling, regime normalization, sequence
                      windowing, the simulator, the evidence/debate agent
-                     logic, and metrics
+                     logic, the ml/agent API services, and metrics
 ```

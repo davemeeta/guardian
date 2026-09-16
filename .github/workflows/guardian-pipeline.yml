@@ -1,0 +1,82 @@
+name: Guardian monitor -> debate -> judge
+
+# Runs the REAL agent pipeline in CI, not a mock: Ollama is installed fresh
+# on this runner and the actual local model does the reasoning. Still zero
+# cloud LLM API calls anywhere — a GitHub Actions runner is a different
+# (ephemeral) machine than a laptop, but it's not a cloud LLM API either.
+# Retraining only happens if the Judge actually approves it; everything else
+# (evidence, both arguments, the verdict) is uploaded as a build artifact.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC — a routine health check
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Which evidence scenario to feed the pipeline (simulates new data arriving)"
+        type: choice
+        default: noise
+        options:
+          - noise
+          - genuine_drift
+          - ambiguous
+
+env:
+  OLLAMA_MODEL: llama3.2:3b
+
+jobs:
+  monitor-debate-judge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Guardian
+        run: pip install -e ".[dev]"
+
+      - name: Download C-MAPSS dataset
+        run: python scripts/download_data.py
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server
+        run: |
+          ollama serve &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/version && break
+            sleep 2
+          done
+
+      - name: Pull the local model
+        run: ollama pull "$OLLAMA_MODEL"
+
+      - name: Run monitor -> debate -> judge
+        run: |
+          python scripts/run_agent_pipeline.py --scenario "${{ inputs.scenario || 'noise' }}" --model "$OLLAMA_MODEL"
+
+      - name: Report decision
+        id: pipeline
+        run: python scripts/ci_report_decision.py
+
+      - name: Retrain (only if the Judge approved)
+        if: steps.pipeline.outputs.decision == 'auto_approve_retrain'
+        run: |
+          echo "Judge approved retraining — running the real training pipeline."
+          python scripts/train.py --config configs/gbm_fd001.yaml
+
+      - name: Escalation notice
+        if: steps.pipeline.outputs.decision == 'escalate_to_human'
+        run: |
+          echo "::warning::Guardian escalated this batch to a human — the debate was genuinely inconclusive. No automatic action was taken. See the agent-decisions artifact for the full transcript."
+
+      - name: Upload audit trail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-decisions
+          path: logs/agent_decisions.jsonl
+          if-no-files-found: warn

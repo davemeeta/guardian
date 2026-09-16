@@ -1,13 +1,23 @@
 """Thin wrapper around a local Ollama server. No network calls leave the
 machine — this is the only place in the agent layer that talks to the LLM,
-so it's also the one place data-sovereignty depends on staying local."""
+so it's also the one place data-sovereignty depends on staying local.
+
+DEFAULT_HOST is read from OLLAMA_HOST at import time so the agent service
+can be pointed at the host machine's Ollama when running in a container
+(e.g. OLLAMA_HOST=http://host.docker.internal:11434) without any code
+change — Ollama itself is never containerized (see docker-compose.yml):
+its model weights are large and Docker on macOS can't pass through Metal
+GPU acceleration, so running it as a normal host process is both simpler
+and faster than containerizing it.
+"""
 import json
+import os
 from dataclasses import dataclass
 
 import requests
 
 DEFAULT_MODEL = "llama3.2:3b"
-DEFAULT_HOST = "http://localhost:11434"
+DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 TIMEOUT_S = 120
 
 

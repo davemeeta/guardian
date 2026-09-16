@@ -1,0 +1,16 @@
+.venv/
+.git/
+.pytest_cache/
+__pycache__/
+*.pyc
+data/raw/
+data/processed/
+mlruns/
+mlartifacts/
+mlflow.db
+checkpoints/
+outputs/
+logs/
+notebooks/
+tests/
+.DS_Store
