@@ -1,15 +1,119 @@
 # Guardian
 
-A self-governing ML system for rare-event prediction in industrial maintenance.
+**A predictive-maintenance system that governs itself.** Guardian doesn't
+just predict when a jet engine will fail — it watches its own model's
+accuracy over time, argues with itself about whether a change in
+performance is genuine drift or just noise, and only retrains when it's
+actually confident that's the right call. Every one of those decisions is
+made by small, open-weight language models running entirely on the machine
+that trained them: nothing about the sensor data, the model's predictions,
+or the reasoning behind a retrain decision ever leaves the building.
 
-Guardian doesn't just predict machine failures — it's designed (across later
-phases) to monitor its own model's health, debate internally whether observed
-performance drift is real or noise, and decide whether to retrain, with a
-full audit trail and everything running on local, open-weight LLMs. See the
-project brief for the full five-phase plan; this repo currently covers
-**Phase 1 (data & baseline ML)**, **Phase 2 (digital-twin augmentation)**,
-**Phase 3 (the debate/judge agent layer)**, and **Phase 4 (containerized
-services, CI/CD, dashboard)**.
+## Why this exists
+
+Two things are usually missing from "the AI system monitors itself and
+retrains automatically" pitches: **data sovereignty** and **auditability**.
+
+- **Data sovereignty.** Sending production sensor data — or even summary
+  statistics derived from it — to a third-party LLM API is a non-starter
+  for a lot of industrial and safety-adjacent employers, especially in the
+  EU. Guardian's entire reasoning layer runs on [Ollama](https://ollama.com)
+  with small open-weight models (`llama3.2:3b` by default, configurable).
+  No API keys, no outbound calls, nothing to explain to a security team —
+  and this holds even in CI/CD, where the pipeline installs Ollama fresh on
+  the runner rather than reaching for a cloud LLM API out of convenience.
+- **Auditability.** A system that silently retrains itself on a schedule is
+  a liability, not a feature, in any regulated or safety-critical context —
+  and this project's dataset is literally jet-engine degradation data.
+  Guardian never makes that call silently. Every retrain decision comes out
+  of an actual argument between two agents and a verdict from a third, and
+  the **full transcript** — not just the final answer — is logged and
+  readable by anyone who wants to know why the system did what it did.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[("NASA C-MAPSS<br/>real engine data")] --> B["Baseline models<br/>GBM + LSTM"]
+    A --> C["Digital-twin simulator<br/>physics-informed"]
+    C -->|"synthetic engines<br/>targeted augmentation"| B
+    B --> D["Evidence packet<br/>RMSE delta, sensor drift, decline-rate"]
+    D --> E{{"Monitor -> Debate -> Judge<br/>local LLM via Ollama"}}
+    E -->|approve| F["Retrain"]
+    E -->|reject| G["No action"]
+    E -->|escalate| H["Human review"]
+    F --> B
+    E --> I[("Audit log<br/>full transcript")]
+    I --> J["Streamlit dashboard"]
+    K["GitHub Actions<br/>scheduled or manual"] --> E
+```
+
+Real NASA turbofan data trains the baseline models; the digital-twin
+simulator (Phase 2) addresses the rare-failure class imbalance visible in
+that data by generating physically-plausible synthetic degradation
+trajectories. Every prediction batch becomes an evidence packet the agent
+layer (Phase 3) reasons over, and every decision — whatever it is — is
+logged and surfaced on a dashboard (Phase 4), with the whole pipeline
+runnable on a schedule or a trigger via CI/CD.
+
+## How the debate mechanism works
+
+This is the part of Guardian that's actually novel, so it's worth walking
+through on its own:
+
+```mermaid
+flowchart TD
+    Ev["Evidence: RMSE delta, sensor drift (SD),<br/>digital-twin decline-rate percentile"] --> Mon["Monitor agent"]
+    Mon -->|"not unusual"| Done1["No debate needed — done"]
+    Mon -->|"flagged for review"| For["Advocate FOR retrain<br/>strongest honest case: this is real drift"]
+    Mon -->|"flagged for review"| Against["Advocate AGAINST retrain<br/>strongest honest case: this is noise"]
+    For --> Judge["Judge agent<br/>weighs the evidence + both arguments"]
+    Against --> Judge
+    Judge -->|"confident: real"| Approve["auto_approve_retrain"]
+    Judge -->|"confident: noise"| Reject["auto_reject"]
+    Judge -->|"genuinely unclear"| Escalate["escalate_to_human"]
+```
+
+1. **Monitor** looks at a batch of evidence — retrospective RMSE against a
+   calibrated baseline, live sensor drift, and a "digital-twin comparison"
+   that reuses Phase 2's simulator to say how this batch's implied
+   degradation rate compares to 100 real calibration engines — and decides
+   whether it's even worth a closer look. Most batches shouldn't be
+   flagged; that's the point of having a monitor at all, rather than
+   litigating every single update.
+2. If flagged, two more agents each get the **same** evidence and build the
+   strongest *honest* case they can for opposite conclusions —
+   **Advocate-for-retrain** argues this is genuine drift, **Advocate-
+   against-retrain** argues it's noise. Neither is allowed to invent
+   evidence it wasn't given.
+3. **Judge** reads the evidence and both arguments and picks one of three
+   outcomes — not two. `auto_approve_retrain` and `auto_reject` are the
+   confident calls; `escalate_to_human` is what happens when the evidence
+   is genuinely mixed, and it's treated as a **legitimate, safe outcome**,
+   not a failure to decide. A system that always forces a confident-
+   sounding answer is worse than one that knows when to ask for help.
+4. Every step of this — not just the verdict — is written to
+   `logs/agent_decisions.jsonl` and viewable in full, transcript and all,
+   in the dashboard. If a parser can't make sense of a model's output, the
+   code fails toward caution by construction (flag for review; escalate to
+   human) rather than silently defaulting to an auto-approve or
+   auto-reject it can't actually verify.
+
+This was tested against three scenarios with known ground truth (`noise`,
+`genuine_drift`, `ambiguous`, generated from the Phase 2 simulator) — see
+[`notebooks/03_agent_debate.ipynb`](notebooks/03_agent_debate.ipynb) for
+the full transcripts and an honest discussion of a case where the small
+local model landed on a cautious `escalate_to_human` rather than the
+clean auto-approve a bigger model might have been more confident about.
+
+## Project status
+
+All five phases of the original build plan are implemented: data &
+baseline ML, digital-twin augmentation, the debate/judge agent layer,
+containerized services + CI/CD + dashboard, and this polish pass. See
+[DEMO.md](DEMO.md) for a ~10-minute interview walkthrough, or the
+phase-by-phase sections below for the full technical detail on any one
+part.
 
 ## Phase 1 status
 
@@ -160,6 +264,18 @@ services, CI/CD, dashboard)**.
   (evidence + transcript) is written to the Job Summary and uploaded as a
   build artifact either way.
 
+## Phase 5 status
+
+- **This README** — the architecture diagram, the plain-language "how the
+  debate mechanism works" walkthrough, and the data-sovereignty +
+  auditability framing above are Phase 5's polish deliverable. The
+  phase-by-phase sections below it are the detailed build log, kept as-is
+  rather than deleted, since they're the actual evidence for every claim
+  made above them.
+- **[DEMO.md](DEMO.md)** — the interview walkthrough script: timed steps,
+  what to say, exact commands, and a fallback plan if a live LLM call is
+  slow or flaky on the day.
+
 ## Setup
 
 ```bash
@@ -268,6 +384,7 @@ error. See [`src/guardian/eval/metrics.py`](src/guardian/eval/metrics.py).
 ## Repo layout
 
 ```
+DEMO.md              ~10-minute interview walkthrough script
 data/                raw (gitignored) + provenance docs
 src/guardian/        data loading/labeling/features, models, simulator, agents,
                      api (ml/agent FastAPI services), dashboard (Streamlit), eval metrics
