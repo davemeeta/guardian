@@ -4,7 +4,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from guardian.agents.debate import DebateResult
-from guardian.agents.evidence import Evidence
 from guardian.api import agent_service
 
 
@@ -13,6 +12,19 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_service, "DEFAULT_LOG_PATH", tmp_path / "agent_decisions.jsonl")
     monkeypatch.setattr(agent_service, "_ctx", None)
     return TestClient(agent_service.app)
+
+
+@pytest.fixture
+def stub_pipeline(monkeypatch, make_evidence):
+    """Skip the real simulator/LLM: /run gets a canned DebateResult."""
+
+    def _stub(**result_fields):
+        result = DebateResult(evidence=make_evidence(), **result_fields)
+        monkeypatch.setattr(agent_service, "get_context", lambda: object())
+        monkeypatch.setattr(agent_service, "generate_scenario", lambda ctx, scenario: make_evidence())
+        monkeypatch.setattr(agent_service, "run_debate", lambda evidence, model: result)
+
+    return _stub
 
 
 def test_run_rejects_unknown_scenario(client):
@@ -26,24 +38,11 @@ def test_decisions_empty_when_no_log(client):
     assert resp.json() == {"decisions": []}
 
 
-def _fake_evidence() -> Evidence:
-    return Evidence(
-        scenario_id="noise", n_units=5,
-        baseline_rmse=20.0, current_rmse=20.0, rmse_delta_pct=0.0,
-        baseline_imminent_rate=0.1, current_imminent_rate=0.1,
-        sensor_drift={"sensor_4": 0.1}, decline_rate_value=1.0, decline_rate_percentile=50.0,
-    )
-
-
-def test_run_success_not_flagged(client, monkeypatch):
-    monkeypatch.setattr(agent_service, "get_context", lambda: object())
-    monkeypatch.setattr(agent_service, "generate_scenario", lambda ctx, scenario: _fake_evidence())
-    fake_result = DebateResult(
-        evidence=_fake_evidence(), monitor_flag=False, monitor_reasoning="fine", debated=False,
-    )
-    monkeypatch.setattr(agent_service, "run_debate", lambda evidence, model: fake_result)
+def test_run_success_not_flagged(client, stub_pipeline):
+    stub_pipeline(monitor_flag=False, monitor_reasoning="fine", debated=False)
 
     resp = client.post("/run", json={"scenario": "noise"})
+
     assert resp.status_code == 200
     body = resp.json()
     assert body["monitor_flag"] is False
@@ -52,17 +51,13 @@ def test_run_success_not_flagged(client, monkeypatch):
     assert body["retrain_result"] is None
 
 
-def test_run_auto_execute_calls_ml_service_on_approval(client, monkeypatch):
-    monkeypatch.setattr(agent_service, "get_context", lambda: object())
-    monkeypatch.setattr(agent_service, "generate_scenario", lambda ctx, scenario: _fake_evidence())
-    fake_result = DebateResult(
-        evidence=_fake_evidence(), monitor_flag=True, monitor_reasoning="x", debated=True,
+def test_run_auto_execute_calls_ml_service_on_approval(client, stub_pipeline, monkeypatch):
+    stub_pipeline(
+        monitor_flag=True, monitor_reasoning="x", debated=True,
         advocate_for_text="for", advocate_against_text="against",
         judge_decision="auto_approve_retrain", judge_rationale="clear drift", judge_confidence="high",
     )
-    monkeypatch.setattr(agent_service, "run_debate", lambda evidence, model: fake_result)
-
-    calls = {}
+    posted_urls = []
 
     class FakeResponse:
         def raise_for_status(self):
@@ -72,29 +67,27 @@ def test_run_auto_execute_calls_ml_service_on_approval(client, monkeypatch):
             return {"status": "trained"}
 
     def fake_post(url, json, timeout):
-        calls["url"] = url
-        calls["json"] = json
+        posted_urls.append(url)
         return FakeResponse()
 
     monkeypatch.setattr(agent_service.httpx, "post", fake_post)
 
     resp = client.post("/run", json={"scenario": "noise", "auto_execute": True})
+
     assert resp.status_code == 200
     body = resp.json()
     assert body["judge_decision"] == "auto_approve_retrain"
     assert body["retrain_result"] == {"status": "trained"}
-    assert calls["url"].endswith("/retrain")
+    assert posted_urls[0].endswith("/retrain")
 
 
-def test_decisions_reads_logged_records(client):
-    log_path = agent_service.DEFAULT_LOG_PATH
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "w") as f:
-        f.write(json.dumps({"scenario_id": "noise", "monitor_flag": False}) + "\n")
-        f.write(json.dumps({"scenario_id": "genuine_drift", "monitor_flag": True}) + "\n")
+def test_decisions_reads_logged_records_most_recent_first(client):
+    records = [
+        {"scenario_id": "noise", "monitor_flag": False},
+        {"scenario_id": "genuine_drift", "monitor_flag": True},
+    ]
+    agent_service.DEFAULT_LOG_PATH.write_text("".join(json.dumps(r) + "\n" for r in records))
 
-    resp = client.get("/decisions")
-    body = resp.json()
-    assert len(body["decisions"]) == 2
-    # most recent first
-    assert body["decisions"][0]["scenario_id"] == "genuine_drift"
+    decisions = client.get("/decisions").json()["decisions"]
+
+    assert [d["scenario_id"] for d in decisions] == ["genuine_drift", "noise"]
