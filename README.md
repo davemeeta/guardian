@@ -55,8 +55,4 @@ Or run the three services with Docker (Ollama stays on the host):
 CI (`.github/workflows/guardian-pipeline.yml`) runs the real pipeline weekly or
 on demand, and only retrains if the Judge approves.
 
-## More
-
-- `DEMO.md`: 10-minute walkthrough
-- `notebooks/`: EDA, simulator + augmentation results, agent debate
-- `src/guardian/`: `data`, `models`, `simulator`, `agents`, `api`, `dashboard`
+Made 
