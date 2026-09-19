@@ -46,17 +46,17 @@ The agents run on a local Ollama model (`llama3.2:3b` by default). Three service
 
 Simulator augmentation vs. baseline (test RMSE, FD001):
 
-![Augmentation before/after](docs/images/augmentation_before_after.png)
+![Augmentation before/after](augmentation_before_after.png)
 
 Validation sweep over augmentation intensity. The LSTM improves and then plateaus; the GBM never beats its no-augmentation baseline:
 
 | LSTM | GBM |
 |---|---|
-| ![LSTM sweep](docs/images/sweep_lstm_val_rmse.png) | ![GBM sweep](docs/images/sweep_gbm_val_rmse.png) |
+| ![LSTM sweep](sweep_lstm_val_rmse.png) | ![GBM sweep](sweep_gbm_val_rmse.png) |
 
 Real vs. synthetic degradation trajectories from the simulator:
 
-![Real vs synthetic](docs/images/simulator_real_vs_synthetic_trajectories.png)
+![Real vs synthetic](simulator_real_vs_synthetic_trajectories.png)
 
 ## What This Project Does
 
