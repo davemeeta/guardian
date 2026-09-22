@@ -101,8 +101,6 @@ touch mlflow.db && mkdir -p logs checkpoints outputs && docker compose up --buil
 # ml :8001   agent :8002   dashboard :8501
 ```
 
-A 10-minute walkthrough script is in [`DEMO.md`](DEMO.md).
-
 ## The Core Rule
 
 Everything about the decision layer comes back to one rule: **a retrain must never happen silently, and the system must never force a confident call it isn't sure about.**
